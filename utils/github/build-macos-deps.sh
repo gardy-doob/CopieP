@@ -75,9 +75,14 @@ install_dep() {
     cmake --install "$BUILD_DIR/$1"
 }
 
+# QCA does not build with OpenSSL 4 (default on newer runners): use 3.x.
+brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+OPENSSL3_PREFIX=$(brew --prefix openssl@3)
+
 # Group A: No inter-dependencies, build in parallel.
 BUILD_DEP_URL_PATH="${QCA_VERSION}/qca-${QCA_VERSION}" \
     build_dep qca "$QCA_VERSION" "https://download.kde.org/stable/qca" \
+        -DOPENSSL_ROOT_DIR="$OPENSSL3_PREFIX" \
         -DBUILD_WITH_QT6=ON \
         -DBUILD_TESTS=OFF \
         -DBUILD_TOOLS=OFF \
