@@ -394,6 +394,9 @@ void ClipboardBrowser::editItem(
     if (!index.isValid())
         return;
 
+    if ( !unlockItems({index}) )
+        return;
+
     ItemEditorWidget *editor = d.createCustomEditor(this, index, format);
     if (editor != nullptr && editor->isValid() ) {
         setEditorWidget(editor, changeClipboard);
@@ -642,6 +645,16 @@ QVariantMap ClipboardBrowser::copyIndex(const QModelIndex &index) const
 {
     auto data = index.data(contentType::data).toMap();
     return m_itemSaver ? m_itemSaver->copyItem(m, data) : data;
+}
+
+bool ClipboardBrowser::isItemLocked(const QModelIndex &index) const
+{
+    return m_itemSaver && m_itemSaver->isItemLocked(index);
+}
+
+bool ClipboardBrowser::unlockItems(const QModelIndexList &indexes) const
+{
+    return !m_itemSaver || m_itemSaver->unlockItems(indexes);
 }
 
 QVariantMap ClipboardBrowser::copyIndexes(const QModelIndexList &indexes) const
@@ -1062,6 +1075,11 @@ void ClipboardBrowser::mouseMoveEvent(QMouseEvent *event)
         selected.append(targetIndex);
     }
 
+    if ( !unlockItems(selected) ) {
+        m_dragStartPosition = QPoint();
+        return;
+    }
+
     QVariantMap data = copyIndexes(selected);
 
     m_dragStartPosition = QPoint();
@@ -1190,6 +1208,9 @@ bool ClipboardBrowser::openEditor(
 bool ClipboardBrowser::openEditor(const QModelIndex &index, const QString &format)
 {
     if ( !isLoaded() )
+        return false;
+
+    if ( index.isValid() && !unlockItems({index}) )
         return false;
 
     const auto data = m_sharedData->itemFactory->data(index);
@@ -1348,6 +1369,9 @@ void ClipboardBrowser::moveToClipboard(const QModelIndex &ind)
 
 void ClipboardBrowser::moveToClipboard(const QModelIndexList &indexes)
 {
+    if ( !unlockItems(indexes) )
+        return;
+
     const auto data = copyIndexes(indexes);
 
     if ( m_sharedData->moveItemOnReturnKey

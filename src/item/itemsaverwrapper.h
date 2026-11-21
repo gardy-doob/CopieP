@@ -21,6 +21,10 @@ public:
 
     void setFocus(bool focus) override;
 
+    bool isItemLocked(const QModelIndex &index) override;
+
+    bool unlockItems(const QList<QModelIndex> &indexList) override;
+
 protected:
     ItemSaverInterface *wrapped() const { return m_saver.get(); }
 

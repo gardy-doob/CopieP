@@ -225,6 +225,7 @@ struct hide_menu_bar : Config<bool> {
 
 struct hide_toolbar : Config<bool> {
     static QString name() { return QStringLiteral("hide_toolbar"); }
+    static Value defaultValue() { return true; }
 };
 
 struct hide_toolbar_labels : Config<bool> {

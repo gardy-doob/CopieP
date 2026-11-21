@@ -389,7 +389,7 @@ void Theme::resetTheme()
     m_theme["fg"]        = Option(defaultColorVarText, "VALUE", ui ? ui->pushButtonColorFg : nullptr);
     m_theme["edit_fg"]   = Option(defaultColorVarText, "VALUE", ui ? ui->pushButtonColorEditorFg : nullptr);
     m_theme["num_fg"]    = Option(defaultColorVarPlaceholderText, "VALUE", ui ? ui->pushButtonColorNumberFg : nullptr);
-    m_theme["alt_bg"]    = Option(defaultColorVarAlternateBase, "VALUE", ui ? ui->pushButtonColorAltBg : nullptr);
+    m_theme["alt_bg"]    = Option(defaultColorVarBase, "VALUE", ui ? ui->pushButtonColorAltBg : nullptr);
     m_theme["sel_bg"]    = Option(defaultColorVarHighlight, "VALUE", ui ? ui->pushButtonColorSelBg : nullptr);
     m_theme["sel_fg"]    = Option(defaultColorVarHighlightText, "VALUE", ui ? ui->pushButtonColorSelFg : nullptr);
     m_theme["find_bg"]   = Option("yellow", "VALUE", ui ? ui->pushButtonColorFoundBg : nullptr);
@@ -405,12 +405,16 @@ void Theme::resetTheme()
     m_theme["num_font"]    = Option("", "VALUE", ui ? ui->pushButtonNumberFont : nullptr);
     m_theme["notes_font"]  = Option("", "VALUE", ui ? ui->pushButtonNotesFont : nullptr);
     m_theme["notification_font"]  = Option("", "VALUE", ui ? ui->pushButtonNotificationFont : nullptr);
-    m_theme["show_number"] = Option(true, "checked", ui ? ui->checkBoxShowNumber : nullptr);
+    m_theme["show_number"] = Option(false, "checked", ui ? ui->checkBoxShowNumber : nullptr);
     m_theme["show_scrollbars"] = Option(true, "checked", ui ? ui->checkBoxScrollbars : nullptr);
 
-    m_theme["css"] = Option("");
+    // CopieP: macOS-like defaults (no stripes, rounded rows, roomy spacing).
+    m_theme["css"] = Option(
+                "\n    #ClipboardBrowser{border: 0}"
+                "\n    #ClipboardBrowser::item{margin: 1px 6px}"
+                );
     m_theme["menu_css"] = Option(
-                "\n    ;border: 1px solid ${sel_bg}"
+                "\n    ;border: 1px solid ${bg - #222}"
                 "\n    ;background: ${bg}"
                 "\n    ;color: ${fg}"
                 );
@@ -426,33 +430,44 @@ void Theme::resetTheme()
                 "\n    ;color: ${bg - #666}"
                 );
 
-    m_theme["item_css"] = Option("");
+    m_theme["item_css"] = Option(
+                "\n    ;padding: 0.4em 0.6em"
+                "\n    ;border-radius: 7px"
+                );
     m_theme["alt_item_css"] = Option("");
-    m_theme["sel_item_css"] = Option("");
-    m_theme["hover_item_css"] = Option("");
+    m_theme["sel_item_css"] = Option(
+                "\n    ;border-radius: 7px"
+                );
+    m_theme["hover_item_css"] = Option(
+                "\n    ;border-radius: 7px"
+                );
     m_theme["cur_item_css"] = Option(
-                "\n    ;border: 0.1em solid ${sel_bg}"
+                "\n    ;border: 0"
                 );
     m_theme["item_spacing"] = Option("");
     m_theme["notes_css"] = Option("");
 
     m_theme["tab_bar_css"] = Option(
-                "\n    ;background: ${bg - #222}"
+                "\n    ;background: ${bg}"
                 );
     m_theme["tab_bar_tab_selected_css"] = Option(
-                "\n    ;padding: 0.5em"
-                "\n    ;background: ${bg}"
-                "\n    ;border: 0.05em solid ${bg}"
-                "\n    ;color: ${fg}"
+                "\n    ;padding: 0.3em 0.9em"
+                "\n    ;margin: 0.3em 0.15em"
+                "\n    ;background: ${sel_bg}"
+                "\n    ;border: 0"
+                "\n    ;border-radius: 6px"
+                "\n    ;color: ${sel_fg}"
                 );
     m_theme["tab_bar_tab_unselected_css"] = Option(
-                "\n    ;border: 0.05em solid ${bg}"
-                "\n    ;padding: 0.5em"
-                "\n    ;background: ${bg - #222}"
-                "\n    ;color: ${fg - #333}"
+                "\n    ;border: 0"
+                "\n    ;padding: 0.3em 0.9em"
+                "\n    ;margin: 0.3em 0.15em"
+                "\n    ;border-radius: 6px"
+                "\n    ;background: transparent"
+                "\n    ;color: ${fg}"
                 );
     m_theme["tab_bar_scroll_buttons_css"] = Option(
-                "\n    ;background: ${bg - #222}"
+                "\n    ;background: ${bg}"
                 "\n    ;color: ${fg}"
                 "\n    ;border: 0"
                 );
@@ -504,11 +519,13 @@ void Theme::resetTheme()
     m_theme["search_bar"] = Option(
                 "\n    ;background: ${edit_bg}"
                 "\n    ;color: ${edit_fg}"
-                "\n    ;border: 1px solid ${alt_bg}"
-                "\n    ;margin: 2px"
+                "\n    ;border: 1px solid ${bg - #222}"
+                "\n    ;border-radius: 7px"
+                "\n    ;padding: 0.25em 0.5em"
+                "\n    ;margin: 6px"
                 );
     m_theme["search_bar_focused"] = Option(
-                "\n    ;border: 1px solid ${sel_bg}"
+                "\n    ;border: 2px solid ${sel_bg}"
                 );
 
     m_theme["use_system_icons"] = Option(false, "checked", ui ? ui->checkBoxSystemIcons : nullptr);

@@ -209,6 +209,18 @@ public:
 
     virtual void setFocus(bool focus);
 
+    /**
+     * Return true if item content is locked (hidden until user authenticates).
+     */
+    virtual bool isItemLocked(const QModelIndex &index);
+
+    /**
+     * Called before user explicitly accesses items content (copy, paste,
+     * edit, show). Can ask user to authenticate.
+     * @return true if items can be accessed
+     */
+    virtual bool unlockItems(const QList<QModelIndex> &indexList);
+
     ItemSaverInterface(const ItemSaverInterface &) = delete;
     ItemSaverInterface &operator=(const ItemSaverInterface &) = delete;
 };

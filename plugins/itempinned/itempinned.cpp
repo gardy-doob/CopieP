@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "itempinned.h"
+#include "pinnedlock.h"
 
 #include "common/command.h"
 #include "common/contenttype.h"
@@ -12,6 +13,8 @@
 #include <QMessageBox>
 #include <QModelIndex>
 #include <QPainter>
+#include <QPainterPath>
+#include <QGraphicsOpacityEffect>
 
 #include <algorithm>
 
@@ -38,6 +41,69 @@ bool containsPinnedItems(const QModelIndexList &indexList)
     return std::any_of( std::begin(indexList), std::end(indexList), isPinned );
 }
 
+/// Covers the content of a protected item until the user authenticates.
+class LockOverlay final : public QWidget
+{
+public:
+    explicit LockOverlay(QWidget *parent)
+        : QWidget(parent)
+    {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setFocusPolicy(Qt::NoFocus);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        if ( !PinnedLock::isLocked() )
+            return;
+
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+
+        // Use application palette: item widgets are styled transparent.
+        const QPalette pal = QApplication::palette();
+        QColor bg = pal.color(QPalette::Active, QPalette::Base);
+        bg.setAlpha(255);
+        QColor fg = pal.color(QPalette::Active, QPalette::Text);
+
+        const QRectF r = QRectF(rect()).adjusted(1, 1, -1, -1);
+        QPainterPath path;
+        path.addRoundedRect(r, 8, 8);
+        p.fillPath(path, bg);
+        QColor tint = fg;
+        tint.setAlpha(18);
+        p.fillPath(path, tint);
+
+        QFont f = font();
+        p.setFont(f);
+        QColor textColor = fg;
+        textColor.setAlpha(170);
+        p.setPen(textColor);
+
+        const QString text = QString::fromUtf8("\xF0\x9F\x94\x92  ")
+            + ItemPinnedLoader::tr("Élément protégé — Entrée ou double-clic pour déverrouiller");
+        const QFontMetrics fm(f);
+        const int lineHeight = fm.height() + 8;
+        QRectF textRect = r.adjusted(10, 0, -10, 0);
+        if (textRect.height() > lineHeight)
+            textRect.setHeight(lineHeight);
+        p.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
+                   fm.elidedText(text, Qt::ElideRight, int(textRect.width())));
+    }
+};
+
+QVariantMap lockedItemData(const QVariantMap &itemData)
+{
+    // Keep only internal formats (pinned flag, tags...) and drop content.
+    QVariantMap result;
+    for (auto it = itemData.constBegin(); it != itemData.constEnd(); ++it) {
+        if ( it.key().startsWith(QLatin1String("application/x-copyq-")) )
+            result.insert(it.key(), it.value());
+    }
+    return result;
+}
+
 } // namespace
 
 ItemPinned::ItemPinned(ItemWidget *childItem)
@@ -52,6 +118,9 @@ ItemPinned::ItemPinned(ItemWidget *childItem)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(childItem->widget());
     layout->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+
+    m_lockOverlay = new LockOverlay(this);
+    m_lockOverlay->raise();
 }
 
 void ItemPinned::paintEvent(QPaintEvent *paintEvent)
@@ -68,6 +137,28 @@ void ItemPinned::paintEvent(QPaintEvent *paintEvent)
     }
     const int border = pointsToPixels(m_indicatorWidth, this);
     painter.fillRect(width() - border, 0, border, height(), color);
+
+    const bool locked = PinnedLock::isLocked();
+    if (m_lockOverlay) {
+        m_lockOverlay->setGeometry(0, 0, width() - border, height());
+        if (m_lockOverlay->isVisible() != locked)
+            m_lockOverlay->setVisible(locked);
+        m_lockOverlay->raise();
+    }
+
+    // Make the real content fully invisible while locked (the overlay alone
+    // could be translucent with some themes).
+    QWidget *child = findChild<QWidget*>(QStringLiteral("item_child"), Qt::FindDirectChildrenOnly);
+    if (child) {
+        auto effect = qobject_cast<QGraphicsOpacityEffect*>(child->graphicsEffect());
+        if (locked && !effect) {
+            effect = new QGraphicsOpacityEffect(child);
+            effect->setOpacity(0.0);
+            child->setGraphicsEffect(effect);
+        } else if (!locked && effect) {
+            child->setGraphicsEffect(nullptr);
+        }
+    }
 }
 
 void ItemPinned::updateSize(QSize maximumSize, int idealWidth)
@@ -137,6 +228,21 @@ void ItemPinnedScriptable::unpinData()
     call("removeData", {mimePinned});
 }
 
+bool ItemPinnedScriptable::unlockProtected()
+{
+    return call("callPlugin", {QStringLiteral("itempinned"), QStringLiteral("unlock")}).toBool();
+}
+
+void ItemPinnedScriptable::lockProtected()
+{
+    call("callPlugin", {QStringLiteral("itempinned"), QStringLiteral("lock")});
+}
+
+bool ItemPinnedScriptable::isProtectedLocked()
+{
+    return call("callPlugin", {QStringLiteral("itempinned"), QStringLiteral("isLocked")}).toBool();
+}
+
 QString ItemPinnedScriptable::getMimePinned() const
 {
     return ::mimePinned;
@@ -184,6 +290,28 @@ bool ItemPinnedSaver::canMoveItems(const QList<QModelIndex> &indexList)
 {
     return !containsPinnedItems(indexList)
             && ItemSaverWrapper::canMoveItems(indexList);
+}
+
+QVariantMap ItemPinnedSaver::copyItem(const QAbstractItemModel &model, const QVariantMap &itemData)
+{
+    const QVariantMap data = ItemSaverWrapper::copyItem(model, itemData);
+    if ( itemData.contains(mimePinned) && PinnedLock::isLocked() )
+        return lockedItemData(data);
+    return data;
+}
+
+bool ItemPinnedSaver::isItemLocked(const QModelIndex &index)
+{
+    if ( isPinned(index) && PinnedLock::isLocked() )
+        return true;
+    return ItemSaverWrapper::isItemLocked(index);
+}
+
+bool ItemPinnedSaver::unlockItems(const QList<QModelIndex> &indexList)
+{
+    if ( containsPinnedItems(indexList) && !PinnedLock::unlock() )
+        return false;
+    return ItemSaverWrapper::unlockItems(indexList);
 }
 
 void ItemPinnedSaver::onRowsInserted(const QModelIndex &, int start, int end)
@@ -309,6 +437,20 @@ ItemSaverPtr ItemPinnedLoader::transformSaver(const ItemSaverPtr &saver, QAbstra
     return std::make_shared<ItemPinnedSaver>(model, saver);
 }
 
+QVariant ItemPinnedLoader::scriptCallback(const QVariantList &arguments)
+{
+    const QString action = arguments.value(0).toString();
+    if (action == QLatin1String("unlock"))
+        return PinnedLock::unlock();
+    if (action == QLatin1String("lock")) {
+        PinnedLock::lock();
+        return true;
+    }
+    if (action == QLatin1String("isLocked"))
+        return PinnedLock::isLocked();
+    return QVariant();
+}
+
 ItemScriptable *ItemPinnedLoader::scriptableObject()
 {
     return new ItemPinnedScriptable();
@@ -333,6 +475,23 @@ QVector<Command> ItemPinnedLoader::commands() const
     c.name = tr("Unpin");
     c.input = mimePinned;
     c.cmd = "copyq: plugins.itempinned.unpin()";
+    commands.append(c);
+
+    c = Command();
+    c.icon = fromIconId(IconLock);
+    c.inMenu = true;
+    c.internalId = QStringLiteral("copiep_pinned_unlock");
+    c.name = QString::fromUtf8("Déverrouiller les éléments protégés");
+    c.cmd = "copyq: plugins.itempinned.unlockProtected()";
+    c.shortcuts = QStringList{QStringLiteral("ctrl+u")};
+    commands.append(c);
+
+    c = Command();
+    c.icon = fromIconId(IconLock);
+    c.inMenu = true;
+    c.internalId = QStringLiteral("copiep_pinned_lock");
+    c.name = QString::fromUtf8("Verrouiller les éléments protégés");
+    c.cmd = "copyq: plugins.itempinned.lockProtected()";
     commands.append(c);
 
     return commands;

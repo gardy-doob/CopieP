@@ -205,6 +205,16 @@ QVariantMap ItemSaverInterface::copyItem(const QAbstractItemModel &, const QVari
     return itemData;
 }
 
+bool ItemSaverInterface::isItemLocked(const QModelIndex &)
+{
+    return false;
+}
+
+bool ItemSaverInterface::unlockItems(const QList<QModelIndex> &)
+{
+    return true;
+}
+
 void ItemSaverInterface::setFocus(bool)
 {
     /* No-op default: subclasses override to handle focus changes */

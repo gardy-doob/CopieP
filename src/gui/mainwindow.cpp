@@ -39,6 +39,7 @@
 #include "gui/iconfactory.h"
 #include "gui/iconselectdialog.h"
 #include "gui/icons.h"
+#include "gui/fromiconid.h"
 #include "gui/logdialog.h"
 #include "gui/navigation.h"
 #include "gui/notification.h"
@@ -1182,8 +1183,16 @@ void MainWindow::updateIcon()
 {
     const QIcon icon = appIcon();
     setWindowIcon(icon);
-    if (m_tray)
+    if (m_tray) {
+#ifdef Q_OS_MAC
+        // Monochrome template icon so it matches other menu bar icons.
+        QIcon trayIcon(QStringLiteral(":/images/icon_tray"));
+        trayIcon.setIsMask(true);
+        m_tray->setIcon(trayIcon);
+#else
         m_tray->setIcon(icon);
+#endif
+    }
 }
 
 void MainWindow::updateContextMenuTimeout()
@@ -2164,6 +2173,9 @@ void MainWindow::addMenuItems(TrayMenu *menu, ClipboardBrowserPlaceholder *place
         const QModelIndex index = c->model()->index(i, 0);
         if ( !searchText.isEmpty() && !menuItemMatches(index, searchText) )
             continue;
+        // Never show protected (locked) items in the tray menu.
+        if ( c->isItemLocked(index) )
+            continue;
         QVariantMap data = index.data(contentType::data).toMap();
         QAction *act = menu->addClipboardItemAction(data, m_options.trayImages);
         if ( !m_displayCommands.isEmpty() ) {
@@ -2704,6 +2716,33 @@ void MainWindow::updateCommands(QVector<Command> allCommands, bool forceSave)
 bool MainWindow::syncInternalCommands(QVector<Command> *allCommands)
 {
     bool changed = false;
+
+    // CopieP: Windows 11 like clipboard panel on Option+V (added only once,
+    // user can change or remove it in Preferences > Shortcuts).
+    {
+        QSettings settings;
+        const QString key = QStringLiteral("CopieP/paste_popup_added");
+        if ( !settings.value(key).toBool() ) {
+            const QString internalId = QStringLiteral("copiep_global_paste_popup");
+            const bool exists = std::any_of(
+                std::begin(*allCommands), std::end(*allCommands),
+                [&](const Command &cmd){ return cmd.internalId == internalId; });
+            if (!exists) {
+                Command c;
+                c.internalId = internalId;
+                c.name = QString::fromUtf8("Choisir quoi coller (façon Windows 11)");
+                c.cmd = QStringLiteral(
+                    "copyq: visible() ? hide() : showAt(-1, -1, 340, 420)");
+                c.icon = fromIconId(IconPaste);
+                c.isGlobalShortcut = true;
+                c.globalShortcuts = QStringList{QStringLiteral("alt+v")};
+                c.enable = true;
+                allCommands->append(c);
+                changed = true;
+            }
+            settings.setValue(key, true);
+        }
+    }
 
     for ( const Command &command : globalShortcutCommands() ) {
         if ( syncInternalCommandChanges(command, allCommands) )
@@ -4290,7 +4329,7 @@ void MainWindow::showItemContent()
         return;
 
     const QModelIndex current = c->currentIndex();
-    if ( current.isValid() )
+    if ( current.isValid() && c->unlockItems({current}) )
         openDialog<ClipboardDialog>(current, c->model(), this);
 }
 
@@ -4429,6 +4468,9 @@ void MainWindow::copyItems()
 
     const QModelIndexList indexes = c->selectionModel()->selectedRows();
     if ( indexes.isEmpty() )
+        return;
+
+    if ( !c->unlockItems(indexes) )
         return;
 
     const auto data = c->copyIndexes(indexes);

@@ -37,6 +37,7 @@ protected:
 private:
     QColor m_indicatorColor;
     int m_indicatorWidth = 6;
+    QWidget *m_lockOverlay = nullptr;
 };
 
 class ItemPinnedScriptable final : public ItemScriptable
@@ -53,6 +54,10 @@ public slots:
     void pinData();
     void unpinData();
 
+    bool unlockProtected();
+    void lockProtected();
+    bool isProtectedLocked();
+
     QString getMimePinned() const;
 };
 
@@ -68,6 +73,12 @@ public:
     bool canDropItem(const QModelIndex &index) override;
 
     bool canMoveItems(const QList<QModelIndex> &indexList) override;
+
+    QVariantMap copyItem(const QAbstractItemModel &model, const QVariantMap &itemData) override;
+
+    bool isItemLocked(const QModelIndex &index) override;
+
+    bool unlockItems(const QList<QModelIndex> &indexList) override;
 
 private:
     void onRowsInserted(const QModelIndex &parent, int start, int end);
@@ -114,6 +125,8 @@ public:
     const QObject *signaler() const override { return this; }
 
     ItemScriptable *scriptableObject() override;
+
+    QVariant scriptCallback(const QVariantList &arguments) override;
 
     QVector<Command> commands() const override;
 

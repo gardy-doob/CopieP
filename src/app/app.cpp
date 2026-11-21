@@ -36,8 +36,9 @@ void installTranslator()
     QString locale = qEnvironmentVariable("COPYQ_LOCALE");
     if (locale.isEmpty()) {
         locale = QSettings().value(QStringLiteral("Options/language")).toString();
+        // CopieP: French by default (can still be changed in preferences).
         if (locale.isEmpty())
-            locale = QLocale::system().name();
+            locale = QStringLiteral("fr");
         qputenv("COPYQ_LOCALE", locale.toLocal8Bit());
     }
 

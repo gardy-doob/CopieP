@@ -864,6 +864,7 @@ int main(int argc, char **argv)
     qCInfo(testCategory) << "Using config directory for tests:" << configPath;
     QDir configDir(configPath);
     qputenv("COPYQ_SETTINGS_PATH", configPath.toLocal8Bit());
+    qputenv("COPIEP_DISABLE_PINNED_LOCK", "1");
     qputenv("COPYQ_LOG_FILE", configDir.absoluteFilePath(QStringLiteral("tests.log")).toLocal8Bit());
     qputenv("COPYQ_ITEM_DATA_PATH", configDir.absoluteFilePath(QStringLiteral("items")).toLocal8Bit());
 

@@ -94,6 +94,12 @@ class ClipboardBrowser final : public QListView
 
         QVariantMap copyIndex(const QModelIndex &index) const;
 
+        /** Return true if item content is hidden until user authenticates. */
+        bool isItemLocked(const QModelIndex &index) const;
+
+        /** Ask user to authenticate if any of the items is locked. */
+        bool unlockItems(const QModelIndexList &indexes) const;
+
         QVariantMap copyIndexes(const QModelIndexList &indexes) const;
 
         void removeIndexes(const QModelIndexList &indexes, QString *error = nullptr);

@@ -41,3 +41,13 @@ void ItemSaverWrapper::setFocus(bool focus)
 {
     return m_saver->setFocus(focus);
 }
+
+bool ItemSaverWrapper::isItemLocked(const QModelIndex &index)
+{
+    return m_saver->isItemLocked(index);
+}
+
+bool ItemSaverWrapper::unlockItems(const QList<QModelIndex> &indexList)
+{
+    return m_saver->unlockItems(indexList);
+}
