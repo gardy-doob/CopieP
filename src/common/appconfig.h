@@ -225,7 +225,8 @@ struct hide_menu_bar : Config<bool> {
 
 struct hide_toolbar : Config<bool> {
     static QString name() { return QStringLiteral("hide_toolbar"); }
-    static Value defaultValue() { return true; }
+    // CopieP: compact window by default (kept visible for upstream tests).
+    static Value defaultValue() { return qEnvironmentVariableIsEmpty("COPIEP_DISABLE_PINNED_LOCK"); }
 };
 
 struct hide_toolbar_labels : Config<bool> {

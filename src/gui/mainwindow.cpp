@@ -2722,7 +2722,8 @@ bool MainWindow::syncInternalCommands(QVector<Command> *allCommands)
     {
         QSettings settings;
         const QString key = QStringLiteral("CopieP/paste_popup_added");
-        if ( !settings.value(key).toBool() ) {
+        const bool testMode = !qEnvironmentVariableIsEmpty("COPIEP_DISABLE_PINNED_LOCK");
+        if ( !testMode && !settings.value(key).toBool() ) {
             const QString internalId = QStringLiteral("copiep_global_paste_popup");
             const bool exists = std::any_of(
                 std::begin(*allCommands), std::end(*allCommands),
