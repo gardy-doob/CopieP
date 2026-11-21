@@ -16,6 +16,7 @@ ignore-words-list = [
     'onTop',
     'DoubleClick',
     'INE',
+    'mot',
 ]
 ignore-regex = '''
 ^Comment\[.*
