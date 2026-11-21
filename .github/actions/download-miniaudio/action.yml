@@ -25,12 +25,16 @@ runs:
         curl -sSLo src/miniaudio.h --fail-with-body --retry 3 \
           "https://raw.githubusercontent.com/mackron/miniaudio/$MINIAUDIO_COMMIT/miniaudio.h"
 
-        if command -v sha256sum >/dev/null 2>&1; then
-          sha256cmd='sha256sum -c'
-        elif command -v shasum >/dev/null 2>&1; then
-          sha256cmd='shasum -a 256 -c'
+        # Compare hashes directly: BSD sha256sum on newer macOS runners
+        # does not read checksum lists from stdin.
+        if command -v shasum >/dev/null 2>&1; then
+          actual=$(shasum -a 256 src/miniaudio.h | cut -d' ' -f1)
+        elif command -v sha256sum >/dev/null 2>&1; then
+          actual=$(sha256sum src/miniaudio.h | cut -d' ' -f1)
         else
           echo '::error::No SHA-256 utility found'; exit 1
         fi
 
-        echo "$MINIAUDIO_SHA256  src/miniaudio.h" | $sha256cmd
+        if [ "$actual" != "$MINIAUDIO_SHA256" ]; then
+          echo "::error::miniaudio.h checksum mismatch: $actual"; exit 1
+        fi
