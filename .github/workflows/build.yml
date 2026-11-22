@@ -1,0 +1,57 @@
+name: Fabriquer CopieP
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build
+  cancel-in-progress: true
+
+jobs:
+  mac:
+    name: Mac (puce Apple)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Installer l'outil Tauri
+        run: npm ci
+
+      - name: Tests
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Compiler l'application
+        run: npx tauri build --bundles app
+
+      - name: Créer le fichier d'installation (.dmg)
+        run: |
+          APP="src-tauri/target/release/bundle/macos/CopieP.app"
+          test -d "$APP"
+          codesign --verify --deep "$APP"
+          lipo -archs "$APP/Contents/MacOS/"* | grep -q arm64
+          mkdir dmg
+          cp -R "$APP" dmg/
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname CopieP -srcfolder dmg -ov -format UDZO CopieP.dmg
+
+      - name: Publier
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION-${{ github.run_number }}"
+          gh release create "$TAG" CopieP.dmg \
+            --target "${{ github.sha }}" \
+            --title "CopieP $VERSION (version ${{ github.run_number }})" \
+            --notes "Téléchargez **CopieP.dmg** ci-dessous, ouvrez-le et glissez CopieP dans Applications. Voir LISEZ-MOI.md pour la première ouverture." \
+            --latest
