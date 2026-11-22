@@ -1,0 +1,47 @@
+[package]
+name = "copiep"
+version = "2.0.0"
+description = "Historique du presse-papiers pour Mac, façon Windows 11"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "copiep_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "macos-private-api", "image-png"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-autostart = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+arboard = "3"
+image = { version = "0.25", default-features = false, features = ["png"] }
+aes-gcm = "0.10"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+log = "0.4"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+objc2-local-authentication = "0.3"
+block2 = "0.6"
+core-graphics = "0.24"
+core-foundation = "0.10"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+keyring = { version = "3", features = ["linux-native"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

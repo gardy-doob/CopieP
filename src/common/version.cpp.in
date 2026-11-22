@@ -1,3 +1,0 @@
-#include "common/version.h"
-#include <QLatin1String>
-const QLatin1String versionString("${copyq_version}");

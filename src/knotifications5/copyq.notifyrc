@@ -1,8 +1,0 @@
-[Global]
-IconName=copyq
-Comment=CopyQ Clipboard Manager
-Name=CopyQ
-
-[Event/generic]
-Name=Generic event
-Action=Popup

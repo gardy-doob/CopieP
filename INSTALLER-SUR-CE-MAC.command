@@ -2,15 +2,16 @@
 # CopieP — compile et installe l'app sur ce Mac (puce Apple M).
 # Double-cliquez ce fichier. Si macOS le bloque : clic droit → Ouvrir.
 #
-# Première fois : 20 à 30 min (installation des outils et de Qt).
-# Ensuite : 1 à 2 min (seuls les fichiers modifiés sont recompilés).
+# Première fois : 10 à 20 min (installation de Rust et de l'outil Tauri).
+# Ensuite : environ 1 min.
 
 set -euo pipefail
 cd "$(dirname "$0")"
 SRC="$PWD"
-BUILD="$HOME/Library/Caches/copiep-build"
-STAGE="$BUILD/install"
-APP_NAME="CopyQ.app"
+APP_NAME="CopieP.app"
+BUNDLE_ID="fr.copiep.app"
+# Cache gardé même si vous décompressez une nouvelle version ailleurs.
+export CARGO_TARGET_DIR="$HOME/Library/Caches/copiep-build"
 
 pause_exit() {
     echo
@@ -25,7 +26,7 @@ step() { echo; echo "▶ $1"; }
 
 [ "$(uname -m)" = "arm64" ] || pause_exit "Ce script est prévu pour les Mac à puce Apple (M1, M2, M3, M4…)."
 
-# --- 1. Outils Apple ---------------------------------------------------------
+# --- 1. Outils Apple -------------------------------------------------------------
 step "Vérification des outils Apple"
 if ! xcode-select -p >/dev/null 2>&1; then
     xcode-select --install || true
@@ -33,72 +34,65 @@ if ! xcode-select -p >/dev/null 2>&1; then
 Terminez-la, puis double-cliquez à nouveau ce fichier."
 fi
 
-# --- 2. Homebrew ---------------------------------------------------------------
-step "Vérification de Homebrew"
-if ! command -v brew >/dev/null 2>&1 && [ -x /opt/homebrew/bin/brew ]; then
-    eval "$(/opt/homebrew/bin/brew shellenv)"
-fi
-if ! command -v brew >/dev/null 2>&1; then
-    echo "Installation de Homebrew (votre mot de passe de session va être demandé)…"
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    eval "$(/opt/homebrew/bin/brew shellenv)"
-    grep -q 'brew shellenv' "$HOME/.zprofile" 2>/dev/null \
-        || echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> "$HOME/.zprofile"
+# --- 2. Rust -------------------------------------------------------------------------
+step "Vérification de Rust"
+[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "Installation de Rust (quelques minutes)…"
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+    source "$HOME/.cargo/env"
 fi
 
-# --- 3. Dépendances ------------------------------------------------------------
-step "Installation de Qt, CMake et Ninja (long la première fois)"
-for pkg in qt cmake ninja; do
-    brew list "$pkg" >/dev/null 2>&1 || brew install "$pkg"
-done
-QT_PREFIX="$(brew --prefix qt)"
+# --- 3. Outil Tauri ------------------------------------------------------------------
+step "Vérification de l'outil Tauri"
+if ! cargo tauri --version >/dev/null 2>&1; then
+    echo "Installation de l'outil Tauri (5 à 10 min, une seule fois)…"
+    cargo install tauri-cli --version "^2" --locked
+fi
 
-# --- 4. Mise à jour du code (si le dossier vient de git) -------------------------
+# --- 4. Dernière version du code (si le dossier vient de git) -----------------------
 if [ -d "$SRC/.git" ] && command -v git >/dev/null 2>&1; then
     step "Récupération de la dernière version du code"
     git -C "$SRC" pull --ff-only || echo "(mise à jour ignorée, on compile la version présente)"
 fi
 
-# --- 5. Compilation --------------------------------------------------------------
+# --- 5. Compilation ------------------------------------------------------------------
 step "Compilation de CopieP"
-cmake -S "$SRC" -B "$BUILD" -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
-    -DCMAKE_OSX_ARCHITECTURES=arm64 \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=13 \
-    -DCMAKE_INSTALL_PREFIX="$STAGE" \
-    -DCMAKE_CXX_FLAGS="-Wno-deprecated-declarations" \
-    -DWITH_TESTS=OFF \
-    -DWITH_QCA_ENCRYPTION=OFF \
-    -DWITH_KEYCHAIN=OFF \
-    -DWITH_AUDIO=OFF \
-    -DWITH_NATIVE_NOTIFICATIONS=OFF \
-    >/dev/null
-cmake --build "$BUILD"
+cargo tauri build --bundles app
 
-step "Préparation de l'application"
-rm -rf "$STAGE"
-cmake --install "$BUILD" >/dev/null
+APP="$CARGO_TARGET_DIR/release/bundle/macos/$APP_NAME"
+[ -d "$APP" ] || pause_exit "Application introuvable après la compilation."
 
-APP="$(/usr/bin/find "$STAGE" -maxdepth 2 -name "$APP_NAME" -type d | head -1)"
-[ -n "$APP" ] || pause_exit "Application introuvable après la compilation."
-
-xattr -cr "$APP"
-codesign --force --deep --sign - "$APP" >/dev/null 2>&1
-
-# --- 6. Installation -------------------------------------------------------------
+# --- 6. Installation -----------------------------------------------------------------
 step "Installation dans Applications"
-osascript -e 'tell application "CopyQ" to quit' >/dev/null 2>&1 || true
-pkill -x CopyQ >/dev/null 2>&1 || true
+# L'ancien CopyQ utilise aussi ⌥V : on le ferme pour éviter le conflit.
+osascript -e 'quit app "CopyQ"' >/dev/null 2>&1 || true
+osascript -e 'quit app "CopieP"' >/dev/null 2>&1 || true
+pkill -x CopieP >/dev/null 2>&1 || true
 sleep 1
+
 rm -rf "/Applications/$APP_NAME"
 cp -R "$APP" "/Applications/$APP_NAME"
+xattr -cr "/Applications/$APP_NAME"
+
+# Chaque compilation change la signature de l'app : macOS garde une ancienne
+# autorisation d'Accessibilité qui ne marche plus. On la retire pour que
+# l'app la redemande proprement.
+tccutil reset Accessibility "$BUNDLE_ID" >/dev/null 2>&1 || true
+
 open "/Applications/$APP_NAME"
 
 trap - ERR
-pause_exit "✅ CopieP est installé et lancé.
+MSG="✅ CopieP est installé et lancé (icône dans la barre de menus, en haut).
 
-Après chaque installation, macOS peut retirer l'autorisation d'Accessibilité :
-si Option + V ou le collage automatique ne marchent plus, allez dans
-Réglages Système → Confidentialité et sécurité → Accessibilité,
-retirez CopyQ avec « – », puis ajoutez-le à nouveau." 0
+Dernière étape : pour que le double-clic colle dans vos apps, cliquez
+« Autoriser » dans le panneau, puis activez CopieP dans
+Réglages Système → Confidentialité et sécurité → Accessibilité.
+(À refaire après chaque mise à jour.)"
+if [ -d "/Applications/CopyQ.app" ]; then
+    MSG="$MSG
+
+L'ancien CopyQ est encore dans Applications : vous pouvez le mettre à la
+Corbeille (et le retirer des « Ouverture » dans Réglages Système → Général)."
+fi
+pause_exit "$MSG" 0
