@@ -6,7 +6,7 @@ mod store;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Mutex;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use store::{Content, ItemView, Store};
@@ -33,6 +33,21 @@ struct AppState {
     /// Ce que CopieP vient d'écrire lui-même (à ne pas réenregistrer).
     ignore_change: AtomicI64,
     ignore_text: Mutex<Option<String>>,
+    /// Dernière fermeture du panneau (pour que le clic sur l'icône de la
+    /// barre de menus le ferme au lieu de le rouvrir aussitôt).
+    last_hidden: Mutex<Option<Instant>>,
+}
+
+const KEYCHAIN_REFUSED: &str =
+    "Accès au Trousseau refusé : quittez puis relancez CopieP et autorisez l’accès pour utiliser les éléments protégés.";
+
+/// Erreur si la clé des éléments protégés n'a pas pu être lue.
+fn check_key(app: &AppHandle) -> Result<(), String> {
+    if state(app).store.lock().unwrap().key_available() {
+        Ok(())
+    } else {
+        Err(KEYCHAIN_REFUSED.into())
+    }
 }
 
 fn state(app: &AppHandle) -> State<'_, AppState> {
@@ -69,6 +84,8 @@ fn start_monitor(app: AppHandle) {
                 last_change = change;
                 let st = state(&app);
                 if change == Some(st.ignore_change.load(Ordering::SeqCst)) {
+                    // Écrit par CopieP : ne pas garder le texte en mémoire.
+                    *st.ignore_text.lock().unwrap() = None;
                     continue;
                 }
                 if platform::clipboard_is_concealed() {
@@ -171,12 +188,12 @@ fn place_window(app: &AppHandle, window: &WebviewWindow, place: Place) {
     let Ok(size) = window.outer_size() else { return };
     let (w, h) = (size.width as f64, size.height as f64);
 
-    let (ax, ay, below) = match place {
+    let (ax, ay) = match place {
         Place::Cursor => match app.cursor_position() {
-            Ok(p) => (p.x, p.y, true),
+            Ok(p) => (p.x, p.y),
             Err(_) => return,
         },
-        Place::Below(x, y) => (x, y, true),
+        Place::Below(x, y) => (x, y),
     };
 
     let monitor = app
@@ -195,7 +212,7 @@ fn place_window(app: &AppHandle, window: &WebviewWindow, place: Place) {
         Place::Cursor => ax - 24.0 * monitor.scale_factor(),
         Place::Below(..) => ax - w / 2.0,
     };
-    let mut y = if below { ay + 10.0 * monitor.scale_factor() } else { ay - h };
+    let mut y = ay + 10.0 * monitor.scale_factor();
     if y + h > bottom - margin {
         // Pas assez de place sous le pointeur : au-dessus.
         y = ay - h - 10.0 * monitor.scale_factor();
@@ -211,7 +228,10 @@ fn show_panel(app: &AppHandle, place: Place) {
         hide_panel(app, true);
         return;
     }
-    *state(app).previous_app.lock().unwrap() = platform::frontmost_app_pid();
+    let st = state(app);
+    // Toujours verrouillé à l'ouverture.
+    st.unlocked.store(false, Ordering::SeqCst);
+    *st.previous_app.lock().unwrap() = platform::frontmost_app_pid();
     place_window(app, &window, place);
 
     #[cfg(target_os = "macos")]
@@ -231,6 +251,7 @@ fn hide_panel(app: &AppHandle, give_back_focus: bool) {
     if let Some(window) = main_window(app) {
         if window.is_visible().unwrap_or(false) {
             let _ = window.hide();
+            *st.last_hidden.lock().unwrap() = Some(Instant::now());
             if give_back_focus {
                 if let Some(pid) = *st.previous_app.lock().unwrap() {
                     platform::activate_app(pid);
@@ -253,14 +274,17 @@ fn ensure_unlocked(app: &AppHandle) -> bool {
     if st.authenticating.swap(true, Ordering::SeqCst) {
         return false;
     }
-    let ok = platform::authenticate("afficher et coller vos éléments protégés");
+    // macOS affiche « CopieP essaie de … ».
+    let ok = platform::authenticate("déverrouiller vos éléments protégés");
     st.authenticating.store(false, Ordering::SeqCst);
-    if ok {
+    let visible = main_window(app).map(|w| w.is_visible().unwrap_or(false)).unwrap_or(false);
+    // Si le panneau a été fermé pendant la demande, il reste verrouillé.
+    if ok && visible {
         st.unlocked.store(true, Ordering::SeqCst);
         notify_changed(app);
     }
-    if let Some(window) = main_window(app) {
-        if window.is_visible().unwrap_or(false) {
+    if visible {
+        if let Some(window) = main_window(app) {
             let _ = window.set_focus();
         }
     }
@@ -270,7 +294,9 @@ fn ensure_unlocked(app: &AppHandle) -> bool {
 // ---------------------------------------------------------------------------
 // Commandes appelées par l'interface
 
-#[tauri::command]
+// (async : hors du fil principal, pour ne pas figer l'interface pendant
+// qu'une grosse image est en cours d'enregistrement.)
+#[tauri::command(async)]
 fn list_items(app: AppHandle) -> Vec<ItemView> {
     let st = state(&app);
     let unlocked = st.unlocked.load(Ordering::SeqCst);
@@ -279,8 +305,9 @@ fn list_items(app: AppHandle) -> Vec<ItemView> {
 }
 
 #[tauri::command]
-async fn unlock(app: AppHandle) -> bool {
-    ensure_unlocked(&app)
+async fn unlock(app: AppHandle) -> Result<bool, String> {
+    check_key(&app)?;
+    Ok(ensure_unlocked(&app))
 }
 
 /// `mode` : "paste" (coller dans l'app précédente) ou "copy" (copier seulement).
@@ -288,10 +315,13 @@ async fn unlock(app: AppHandle) -> bool {
 async fn activate_item(app: AppHandle, id: String, mode: String) -> Result<(), String> {
     let st = state(&app);
     let protected = st.store.lock().unwrap().is_protected(&id);
-    if protected && !ensure_unlocked(&app) {
-        return Err("Déverrouillage annulé".into());
+    if protected {
+        check_key(&app)?;
+        if !ensure_unlocked(&app) {
+            return Err("Déverrouillage annulé".into());
+        }
     }
-    let content = st.store.lock().unwrap().content(&id).ok_or("Élément introuvable")?;
+    let content = st.store.lock().unwrap().content(&id).ok_or("Élément illisible")?;
     write_clipboard(&app, &content, protected)?;
     if !protected {
         st.store.lock().unwrap().touch(&id);
@@ -334,16 +364,24 @@ async fn activate_item(app: AppHandle, id: String, mode: String) -> Result<(), S
 async fn set_pinned(app: AppHandle, id: String, pinned: bool) -> Result<(), String> {
     let st = state(&app);
     let protected = st.store.lock().unwrap().is_protected(&id);
-    if !pinned && protected && !ensure_unlocked(&app) {
-        return Err("Déverrouillage annulé".into());
+    if !pinned && protected {
+        check_key(&app)?;
+        if !ensure_unlocked(&app) {
+            return Err("Déverrouillage annulé".into());
+        }
     }
-    st.store.lock().unwrap().set_pinned(&id, pinned);
+    let ok = st.store.lock().unwrap().set_pinned(&id, pinned);
     notify_changed(&app);
-    Ok(())
+    if ok {
+        Ok(())
+    } else {
+        Err("Impossible de désépingler cet élément".into())
+    }
 }
 
 #[tauri::command]
 async fn set_protected(app: AppHandle, id: String, protect: bool) -> Result<(), String> {
+    check_key(&app)?;
     if !protect && !ensure_unlocked(&app) {
         return Err("Déverrouillage annulé".into());
     }
@@ -448,6 +486,17 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click { rect, button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
                 let app = tray.app_handle();
+                // Le clic vient de fermer le panneau (perte de focus) : ne
+                // pas le rouvrir, pour que l'icône serve aussi à le fermer.
+                let just_hidden = state(app)
+                    .last_hidden
+                    .lock()
+                    .unwrap()
+                    .map(|t| t.elapsed() < Duration::from_millis(400))
+                    .unwrap_or(false);
+                if just_hidden {
+                    return;
+                }
                 let scale = app
                     .primary_monitor()
                     .ok()
@@ -501,6 +550,7 @@ pub fn run() {
                 previous_app: Mutex::new(None),
                 ignore_change: AtomicI64::new(i64::MIN),
                 ignore_text: Mutex::new(None),
+                last_hidden: Mutex::new(None),
             });
 
             let handle = app.handle().clone();

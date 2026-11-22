@@ -46,9 +46,14 @@ html, body {
   cursor: default;
 }
 
-/* Sur Mac, le fond est translucide (effet « popover » de macOS). */
-body.mac { background: transparent; }
-body.mac .panel { background: color-mix(in srgb, var(--panel) 55%, transparent); }
+/* Sur Mac, le fond est translucide (effet « popover » de macOS) et les
+   coins sont arrondis : toute la page doit être transparente autour. */
+html.mac, html.mac body { background: transparent; }
+html.mac .panel {
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+  border-radius: 14px;
+  overflow: hidden;
+}
 
 .panel {
   height: 100%;
@@ -226,7 +231,7 @@ h1 {
 .card:hover .actions,
 .card.selected .actions,
 .actions.always { opacity: 1; }
-body.mac .actions { background: color-mix(in srgb, var(--panel) 92%, transparent); }
+html.mac .actions { background: color-mix(in srgb, var(--panel) 92%, transparent); }
 
 .icon-btn {
   width: 26px;

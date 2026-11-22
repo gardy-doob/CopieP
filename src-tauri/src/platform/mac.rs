@@ -7,7 +7,7 @@ use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
 use core_foundation::string::CFString;
 use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-use objc2::rc::Retained;
+use objc2::rc::{autoreleasepool, Retained};
 use objc2::runtime::Bool;
 use objc2_app_kit::{
     NSApplicationActivationOptions, NSPasteboard, NSPasteboardTypeString, NSRunningApplication,
@@ -43,45 +43,58 @@ fn pasteboard() -> Retained<NSPasteboard> {
 }
 
 /// Compteur de modifications du presse-papiers.
+///
+/// Appelé en boucle depuis un fil secondaire : le bassin de libération évite
+/// d'y accumuler de la mémoire au fil des jours.
 pub fn clipboard_change_count() -> Option<i64> {
-    Some(pasteboard().changeCount() as i64)
+    autoreleasepool(|_| Some(pasteboard().changeCount() as i64))
 }
 
 /// Le contenu actuel demande à ne pas être enregistré (mot de passe…).
 pub fn clipboard_is_concealed() -> bool {
-    let Some(types) = pasteboard().types() else { return false };
-    types.iter().any(|t| {
-        let t = t.to_string();
-        IGNORED_TYPES.contains(&t.as_str())
+    autoreleasepool(|_| {
+        let Some(types) = pasteboard().types() else { return false };
+        types.iter().any(|t| {
+            let t = t.to_string();
+            IGNORED_TYPES.contains(&t.as_str())
+        })
     })
 }
 
 /// Écrit un texte marqué « confidentiel » : les autres historiques de
 /// presse-papiers ne l'enregistrent pas.
 pub fn write_text_concealed(text: &str) -> bool {
-    let pb = pasteboard();
-    pb.clearContents();
-    let ok = unsafe { pb.setString_forType(&NSString::from_str(text), NSPasteboardTypeString) };
-    let _ = pb.setString_forType(&NSString::from_str(""), &NSString::from_str(CONCEALED_TYPE));
-    ok
+    autoreleasepool(|_| {
+        let pb = pasteboard();
+        pb.clearContents();
+        let ok = unsafe { pb.setString_forType(&NSString::from_str(text), NSPasteboardTypeString) };
+        let _ = pb.setString_forType(&NSString::from_str(""), &NSString::from_str(CONCEALED_TYPE));
+        ok
+    })
 }
 
 pub fn clear_clipboard() {
-    pasteboard().clearContents();
+    autoreleasepool(|_| {
+        pasteboard().clearContents();
+    })
 }
 
 /// Application au premier plan (là où il faudra coller).
 pub fn frontmost_app_pid() -> Option<i32> {
-    let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
-    let pid = app.processIdentifier();
-    (pid != std::process::id() as i32).then_some(pid)
+    autoreleasepool(|_| {
+        let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
+        let pid = app.processIdentifier();
+        (pid != std::process::id() as i32).then_some(pid)
+    })
 }
 
 #[allow(deprecated)]
 pub fn activate_app(pid: i32) {
-    if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
-        app.activateWithOptions(NSApplicationActivationOptions::ActivateIgnoringOtherApps);
-    }
+    autoreleasepool(|_| {
+        if let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
+            app.activateWithOptions(NSApplicationActivationOptions::ActivateIgnoringOtherApps);
+        }
+    })
 }
 
 /// Autorisation d'Accessibilité (nécessaire pour simuler ⌘V).
@@ -153,7 +166,9 @@ pub fn setup_panel(ns_window: *mut c_void) {
             | NSWindowCollectionBehavior::FullScreenAuxiliary
             | NSWindowCollectionBehavior::IgnoresCycle,
     );
-    // Au-dessus des fenêtres normales et des apps en plein écran.
-    window.setLevel(101);
+    // Niveau « flottant » : au-dessus des fenêtres normales et des apps en
+    // plein écran, mais sous les fenêtres système (la demande Touch ID ne
+    // doit pas se retrouver cachée derrière le panneau).
+    window.setLevel(3);
     window.setHidesOnDeactivate(false);
 }

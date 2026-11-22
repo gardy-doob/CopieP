@@ -4,6 +4,11 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
+// Sur Mac, le fond est translucide : classe posée tout de suite pour
+// éviter un flash opaque à l'ouverture.
+const IS_MAC = /Macintosh|Mac OS X/.test(navigator.userAgent);
+document.documentElement.classList.toggle('mac', IS_MAC);
+
 const $ = (id) => document.getElementById(id);
 const listEl = $('list');
 const searchEl = $('search');
@@ -25,11 +30,22 @@ function escapeHtml(s) {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// Surligne la recherche. On découpe le texte brut puis on échappe chaque
+// morceau (surligner le texte déjà échappé casserait les « & », « < »…).
 function highlight(text, query) {
-  const safe = escapeHtml(text);
-  if (!query) return safe;
-  const q = escapeHtml(query).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return safe.replace(new RegExp(q, 'gi'), (m) => `<mark>${m}</mark>`);
+  if (!query) return escapeHtml(text);
+  const lower = text.toLowerCase();
+  const q = query.toLowerCase();
+  if (lower.length !== text.length) return escapeHtml(text);
+  let out = '';
+  let pos = 0;
+  for (;;) {
+    const i = lower.indexOf(q, pos);
+    if (i < 0) break;
+    out += `${escapeHtml(text.slice(pos, i))}<mark>${escapeHtml(text.slice(i, i + q.length))}</mark>`;
+    pos = i + q.length;
+  }
+  return out + escapeHtml(text.slice(pos));
 }
 
 function timeAgo(ms) {
@@ -190,7 +206,6 @@ async function refresh() {
 async function refreshStatus() {
   const st = await call('status');
   if (!st) return;
-  document.body.classList.toggle('mac', st.mac);
   $('banner').hidden = !st.mac || st.accessibility;
 }
 
@@ -275,7 +290,8 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   const key = e.key.toLowerCase();
-  if (key === 'c' && it && !window.getSelection().toString()) { e.preventDefault(); activate(it.id, 'copy'); }
+  const searchSelection = document.activeElement === searchEl && searchEl.selectionStart !== searchEl.selectionEnd;
+  if (key === 'c' && it && !searchSelection) { e.preventDefault(); activate(it.id, 'copy'); }
   else if (key === 'backspace' && it) { e.preventDefault(); remove(it); }
   else if (key === 'p' && it) { e.preventDefault(); togglePin(it); }
   else if (key === 'l' && it) { e.preventDefault(); toggleProtect(it); }

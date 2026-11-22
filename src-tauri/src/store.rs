@@ -107,6 +107,9 @@ struct HistoryFile {
 pub struct Store {
     dir: PathBuf,
     key: [u8; 32],
+    /// Faux si le Trousseau a refusé l'accès : la clé n'est alors que
+    /// provisoire et rien ne doit être chiffré avec.
+    key_durable: bool,
     items: Vec<Item>,
     counter: u64,
 }
@@ -115,15 +118,28 @@ impl Store {
     pub fn open(dir: PathBuf) -> Store {
         let _ = fs::create_dir_all(dir.join("images"));
         let _ = fs::create_dir_all(dir.join("protected"));
-        let key = load_or_create_key(&dir);
-        let items = fs::read(dir.join("history.json"))
-            .ok()
-            .and_then(|b| serde_json::from_slice::<HistoryFile>(&b).ok())
-            .map(|h| h.items)
-            .unwrap_or_default();
-        let mut store = Store { dir, key, items, counter: 0 };
+        let (key, key_durable) = load_or_create_key(&dir);
+        let path = dir.join("history.json");
+        let items = match fs::read(&path) {
+            Ok(bytes) => match serde_json::from_slice::<HistoryFile>(&bytes) {
+                Ok(h) => h.items,
+                Err(e) => {
+                    // Fichier illisible : on le met de côté au lieu de l'écraser.
+                    log::warn!("Historique illisible ({e}) : sauvegardé à part");
+                    let _ = fs::rename(&path, dir.join(format!("history-illisible-{}.json", now_ms())));
+                    Vec::new()
+                }
+            },
+            Err(_) => Vec::new(),
+        };
+        let mut store = Store { dir, key, key_durable, items, counter: 0 };
         store.sort();
         store
+    }
+
+    /// Faux si la clé du Trousseau n'a pas pu être lue (accès refusé).
+    pub fn key_available(&self) -> bool {
+        self.key_durable
     }
 
     fn save(&self) {
@@ -356,17 +372,17 @@ impl Store {
 
     pub fn set_pinned(&mut self, id: &str, pinned: bool) -> bool {
         let Some(i) = self.find(id) else { return false };
+        // Désépingler retire aussi la protection. Si le déchiffrement échoue,
+        // on ne touche à rien : un élément protégé doit rester épinglé.
+        if !pinned && self.items[i].protected && !self.set_protected(id, false) {
+            return false;
+        }
         let it = &mut self.items[i];
         it.pinned = pinned;
         if pinned {
             it.pinned_at = now_ms();
         } else {
             it.last_used = now_ms();
-        }
-        if !pinned && it.protected {
-            // Désépingler retire aussi la protection.
-            let _ = self.set_protected(id, false);
-            return true;
         }
         self.sort();
         self.trim();
@@ -382,6 +398,9 @@ impl Store {
             return true;
         }
         if protect {
+            if !self.key_durable {
+                return false;
+            }
             let Some(content) = self.content(id) else { return false };
             let plain = encode_content(&content);
             let Some(blob) = encrypt(&self.key, &plain) else { return false };
@@ -510,42 +529,66 @@ fn decrypt(key: &[u8; 32], blob: &[u8]) -> Option<Vec<u8>> {
     cipher.decrypt(Nonce::from_slice(&blob[..12]), &blob[12..]).ok()
 }
 
-/// Clé de chiffrement : dans le Trousseau macOS. Si le Trousseau est
-/// indisponible (ex. Linux sans service de clés), repli sur un fichier.
-fn load_or_create_key(dir: &Path) -> [u8; 32] {
+/// Clé de chiffrement : dans le Trousseau macOS.
+///
+/// Renvoie la clé et `true` si elle est durable. Si le Trousseau refuse
+/// l'accès (bouton « Refuser » de macOS), on renvoie une clé provisoire et
+/// `false` : surtout ne pas créer une nouvelle clé durable, sinon les
+/// éléments déjà protégés deviendraient illisibles, et ceux protégés ensuite
+/// le deviendraient au lancement suivant.
+///
+/// Repli sur un fichier seulement quand il n'y a pas de Trousseau du tout
+/// (ex. Linux sans service de clés).
+fn load_or_create_key(dir: &Path) -> ([u8; 32], bool) {
     let decode = |s: &str| -> Option<[u8; 32]> { B64.decode(s.trim()).ok()?.try_into().ok() };
+    let random_key = || {
+        let mut k = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut k);
+        k
+    };
+    let path = dir.join("key.bin");
+    let from_file = || fs::read_to_string(&path).ok().as_deref().and_then(decode);
 
+    let mut refused = false;
     if let Ok(entry) = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT) {
         match entry.get_password() {
-            Ok(s) => {
-                if let Some(k) = decode(&s) {
-                    return k;
-                }
-            }
+            Ok(s) => match decode(&s) {
+                Some(k) => return (k, true),
+                // Entrée présente mais illisible : ne pas l'écraser.
+                None => refused = true,
+            },
             Err(keyring::Error::NoEntry) => {
-                let mut k = [0u8; 32];
-                rand::thread_rng().fill_bytes(&mut k);
-                if entry.set_password(&B64.encode(k)).is_ok() && entry.get_password().ok().as_deref().and_then(decode) == Some(k) {
-                    return k;
+                // Un ancien repli fichier existe : le garder, des éléments
+                // sont peut-être chiffrés avec.
+                if let Some(k) = from_file() {
+                    return (k, true);
+                }
+                let k = random_key();
+                if entry.set_password(&B64.encode(k)).is_ok() {
+                    return (k, true);
                 }
             }
-            Err(e) => log::warn!("Trousseau indisponible : {e}"),
+            Err(e) => {
+                log::warn!("Trousseau indisponible : {e}");
+                refused = cfg!(target_os = "macos");
+            }
         }
     }
 
-    let path = dir.join("key.bin");
-    if let Some(k) = fs::read_to_string(&path).ok().as_deref().and_then(decode) {
-        return k;
+    if let Some(k) = from_file() {
+        return (k, true);
     }
-    let mut k = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut k);
+    if refused {
+        return (random_key(), false);
+    }
+    let k = random_key();
     let _ = fs::write(&path, B64.encode(k));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
     }
-    k
+    (k, true)
 }
 
 #[cfg(test)]
@@ -603,6 +646,41 @@ mod tests {
         assert!(!s.image_path(&id).exists());
         assert!(s.set_protected(&id, false));
         assert!(matches!(s.content(&id), Some(Content::Image { width: 4, height: 4, .. })));
+    }
+
+    #[test]
+    fn unpin_protected_fails_safely_when_undecryptable() {
+        let mut s = temp_store();
+        s.add_text("secret".into());
+        let id = s.items[0].id.clone();
+        assert!(s.set_protected(&id, true));
+        // Blob abîmé : le déchiffrement échoue.
+        fs::write(s.protected_path(&id), b"n'importe quoi").unwrap();
+        assert!(!s.set_pinned(&id, false));
+        let it = &s.items[s.find(&id).unwrap()];
+        assert!(it.pinned && it.protected);
+    }
+
+    #[test]
+    fn refuses_to_protect_with_temporary_key() {
+        let mut s = temp_store();
+        s.key_durable = false;
+        s.add_text("secret".into());
+        let id = s.items[0].id.clone();
+        assert!(!s.set_protected(&id, true));
+        assert_eq!(s.items[0].text.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn corrupt_history_is_kept_aside() {
+        let dir = std::env::temp_dir().join(format!("copiep-test-{}", now_ms() ^ rand::random::<u64>()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("history.json"), b"{pas du json").unwrap();
+        let s = Store::open(dir.clone());
+        assert!(s.items.is_empty());
+        let kept = fs::read_dir(&dir).unwrap().filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().starts_with("history-illisible-"));
+        assert!(kept);
     }
 
     #[test]

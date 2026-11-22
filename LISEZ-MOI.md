@@ -51,6 +51,11 @@ Avec un dossier cloné par git, il récupère aussi la dernière version du code
 sécurité → **Accessibilité** (bouton « Autoriser » dans le panneau). macOS retire
 l'autorisation à chaque nouvelle compilation, car la signature de l'app change.
 
+Après une mise à jour, macOS peut aussi demander le mot de passe de session pour laisser
+CopieP lire sa clé dans le **Trousseau** : cliquez « Toujours autoriser ». Si vous refusez,
+rien n'est perdu, mais les éléments protégés restent inaccessibles jusqu'au prochain
+lancement où vous autorisez.
+
 ## Où sont les données
 
 - Historique : `~/Library/Application Support/fr.copiep.app/`

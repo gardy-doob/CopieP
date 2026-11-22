@@ -34,7 +34,16 @@ if ! xcode-select -p >/dev/null 2>&1; then
 Terminez-la, puis double-cliquez à nouveau ce fichier."
 fi
 
-# --- 2. Rust -------------------------------------------------------------------------
+# --- 2. Dernière version du code (si le dossier vient de git) -------------------
+# Fait en premier : si la mise à jour modifie ce script, on le relance pour
+# exécuter la nouvelle version (bash lit le fichier au fur et à mesure).
+if [ -z "${COPIEP_A_JOUR:-}" ] && [ -d "$SRC/.git" ]; then
+    step "Récupération de la dernière version du code"
+    git -C "$SRC" pull --ff-only || echo "(mise à jour ignorée, on compile la version présente)"
+    COPIEP_A_JOUR=1 exec /bin/bash "$SRC/INSTALLER-SUR-CE-MAC.command"
+fi
+
+# --- 3. Rust -------------------------------------------------------------------------
 step "Vérification de Rust"
 [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
 if ! command -v cargo >/dev/null 2>&1; then
@@ -43,17 +52,11 @@ if ! command -v cargo >/dev/null 2>&1; then
     source "$HOME/.cargo/env"
 fi
 
-# --- 3. Outil Tauri ------------------------------------------------------------------
+# --- 4. Outil Tauri ------------------------------------------------------------------
 step "Vérification de l'outil Tauri"
 if ! cargo tauri --version >/dev/null 2>&1; then
     echo "Installation de l'outil Tauri (5 à 10 min, une seule fois)…"
     cargo install tauri-cli --version "^2" --locked
-fi
-
-# --- 4. Dernière version du code (si le dossier vient de git) -----------------------
-if [ -d "$SRC/.git" ] && command -v git >/dev/null 2>&1; then
-    step "Récupération de la dernière version du code"
-    git -C "$SRC" pull --ff-only || echo "(mise à jour ignorée, on compile la version présente)"
 fi
 
 # --- 5. Compilation ------------------------------------------------------------------
@@ -69,6 +72,7 @@ step "Installation dans Applications"
 osascript -e 'quit app "CopyQ"' >/dev/null 2>&1 || true
 osascript -e 'quit app "CopieP"' >/dev/null 2>&1 || true
 pkill -x CopieP >/dev/null 2>&1 || true
+pkill -x copiep >/dev/null 2>&1 || true
 sleep 1
 
 rm -rf "/Applications/$APP_NAME"
