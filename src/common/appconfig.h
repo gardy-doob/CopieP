@@ -217,6 +217,8 @@ struct transparency : Config<int> {
 
 struct hide_tabs : Config<bool> {
     static QString name() { return QStringLiteral("hide_tabs"); }
+    // CopieP: single list like Windows 11 (kept visible for upstream tests).
+    static Value defaultValue() { return qEnvironmentVariableIsEmpty("COPIEP_DISABLE_PINNED_LOCK"); }
 };
 
 struct hide_menu_bar : Config<bool> {

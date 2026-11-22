@@ -21,7 +21,7 @@ class ItemPinned final : public QWidget, public ItemWidgetWrapper
                WRITE setPinnedIndicatorWidth)
 
 public:
-    explicit ItemPinned(ItemWidget *childItem);
+    explicit ItemPinned(ItemWidget *childItem, bool isProtectedItem = false);
 
     QColor pinnedIndicatorColor() const { return m_indicatorColor; }
     void setPinnedIndicatorColor(const QColor &color) { m_indicatorColor = color; }
@@ -38,6 +38,7 @@ private:
     QColor m_indicatorColor;
     int m_indicatorWidth = 6;
     QWidget *m_lockOverlay = nullptr;
+    bool m_protected = false;
 };
 
 class ItemPinnedScriptable final : public ItemScriptable

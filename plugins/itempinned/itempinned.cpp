@@ -21,11 +21,24 @@
 namespace {
 
 const QLatin1String mimePinned("application/x-copyq-item-pinned");
+// CopieP: pinned items with this format are hidden until Touch ID unlock.
+const QLatin1String mimeProtected("application/x-copyq-item-protected");
 
 bool isPinned(const QModelIndex &index)
 {
     const auto dataMap = index.data(contentType::data).toMap();
     return dataMap.contains(mimePinned);
+}
+
+bool isProtected(const QModelIndex &index)
+{
+    const auto dataMap = index.data(contentType::data).toMap();
+    return dataMap.contains(mimeProtected);
+}
+
+bool containsProtectedItems(const QModelIndexList &indexList)
+{
+    return std::any_of( std::begin(indexList), std::end(indexList), isProtected );
 }
 
 Command dummyPinCommand()
@@ -106,9 +119,10 @@ QVariantMap lockedItemData(const QVariantMap &itemData)
 
 } // namespace
 
-ItemPinned::ItemPinned(ItemWidget *childItem)
+ItemPinned::ItemPinned(ItemWidget *childItem, bool isProtectedItem)
     : QWidget( childItem->widget()->parentWidget() )
     , ItemWidgetWrapper(childItem, this)
+    , m_protected(isProtectedItem)
 {
     childItem->widget()->setObjectName("item_child");
     childItem->widget()->setParent(this);
@@ -138,7 +152,7 @@ void ItemPinned::paintEvent(QPaintEvent *paintEvent)
     const int border = pointsToPixels(m_indicatorWidth, this);
     painter.fillRect(width() - border, 0, border, height(), color);
 
-    const bool locked = PinnedLock::isLocked();
+    const bool locked = m_protected && PinnedLock::isLocked();
     if (m_lockOverlay) {
         m_lockOverlay->setGeometry(0, 0, width() - border, height());
         if (m_lockOverlay->isVisible() != locked)
@@ -295,21 +309,21 @@ bool ItemPinnedSaver::canMoveItems(const QList<QModelIndex> &indexList)
 QVariantMap ItemPinnedSaver::copyItem(const QAbstractItemModel &model, const QVariantMap &itemData)
 {
     const QVariantMap data = ItemSaverWrapper::copyItem(model, itemData);
-    if ( itemData.contains(mimePinned) && PinnedLock::isLocked() )
+    if ( itemData.contains(mimeProtected) && PinnedLock::isLocked() )
         return lockedItemData(data);
     return data;
 }
 
 bool ItemPinnedSaver::isItemLocked(const QModelIndex &index)
 {
-    if ( isPinned(index) && PinnedLock::isLocked() )
+    if ( isProtected(index) && PinnedLock::isLocked() )
         return true;
     return ItemSaverWrapper::isItemLocked(index);
 }
 
 bool ItemPinnedSaver::unlockItems(const QList<QModelIndex> &indexList)
 {
-    if ( containsPinnedItems(indexList) && !PinnedLock::unlock() )
+    if ( containsProtectedItems(indexList) && !PinnedLock::unlock() )
         return false;
     return ItemSaverWrapper::unlockItems(indexList);
 }
@@ -424,12 +438,14 @@ ItemPinnedLoader::~ItemPinnedLoader() = default;
 
 QStringList ItemPinnedLoader::formatsToSave() const
 {
-    return QStringList() << mimePinned;
+    return QStringList() << mimePinned << mimeProtected;
 }
 
 ItemWidget *ItemPinnedLoader::transform(ItemWidget *itemWidget, const QVariantMap &data)
 {
-    return data.contains(mimePinned) ? new ItemPinned(itemWidget) : nullptr;
+    if ( !data.contains(mimePinned) && !data.contains(mimeProtected) )
+        return nullptr;
+    return new ItemPinned(itemWidget, data.contains(mimeProtected));
 }
 
 ItemSaverPtr ItemPinnedLoader::transformSaver(const ItemSaverPtr &saver, QAbstractItemModel *model)

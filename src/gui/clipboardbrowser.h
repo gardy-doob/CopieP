@@ -11,6 +11,7 @@
 #include "item/itemwidget.h"
 
 #include <QListView>
+#include <QPersistentModelIndex>
 #include <QPointer>
 #include <QTimer>
 #include <QVariantMap>
@@ -21,6 +22,7 @@ class ItemFactory;
 class QPersistentModelIndex;
 class QProgressBar;
 class QPushButton;
+class QToolButton;
 
 /** List view of clipboard items. */
 class ClipboardBrowser final : public QListView
@@ -408,4 +410,17 @@ class ClipboardBrowser final : public QListView
         bool m_selectNewItems = false;
 
         int m_lastFilterId = 0;
+
+        // CopieP: pin / pin + Touch ID buttons shown on the hovered item.
+    public:
+        void updateHoverActions();
+    private:
+        void togglePinItem(const QPersistentModelIndex &index);
+        void toggleProtectItem(const QPersistentModelIndex &index);
+        void setItemFlags(const QPersistentModelIndex &index, bool pinned, bool isProtected);
+
+        QWidget *m_hoverActions = nullptr;
+        QToolButton *m_pinButton = nullptr;
+        QToolButton *m_protectButton = nullptr;
+        QPersistentModelIndex m_hoverIndex;
 };

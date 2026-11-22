@@ -4,8 +4,10 @@
 
 #include "common/log.h"
 
+#include <QApplication>
 #include <QEvent>
 #include <QGuiApplication>
+#include <QWidget>
 #include <QWindow>
 
 #include <Cocoa/Cocoa.h>
@@ -45,11 +47,23 @@ void becomeBackgroundApp()
     }
 }
 
+// CopieP: the main clipboard window behaves like a panel (no Dock icon,
+// shown over full screen apps), like the Windows 11 clipboard.
+bool isMainWindow(QWindow *window)
+{
+    for (QWidget *widget : QApplication::topLevelWidgets()) {
+        if (widget->windowHandle() == window)
+            return widget->inherits("MainWindow");
+    }
+    return false;
+}
+
 bool isNormalAppWindow(QWindow *window)
 {
     const auto type = window->type();
     return (type == Qt::Dialog || type == Qt::Window)
-            && !window->flags().testFlag(Qt::FramelessWindowHint);
+            && !window->flags().testFlag(Qt::FramelessWindowHint)
+            && !isMainWindow(window);
 }
 
 } // namespace
@@ -83,8 +97,20 @@ bool ForegroundBackgroundFilter::eventFilter(QObject *obj, QEvent *ev)
         const auto wid = window->winId();
         auto nsView = reinterpret_cast<NSView*>(wid);
         auto nsWindow = [nsView window];
-        if (nsWindow)
-            [nsWindow setCollectionBehavior: NSWindowCollectionBehaviorMoveToActiveSpace];
+        if (nsWindow) {
+            if ( isMainWindow(window) ) {
+                // Visible on every space, including over full screen apps.
+                [nsWindow setCollectionBehavior:
+                    NSWindowCollectionBehaviorCanJoinAllSpaces
+                    | NSWindowCollectionBehaviorFullScreenAuxiliary];
+                [nsWindow setLevel: NSFloatingWindowLevel];
+                [nsWindow setHidesOnDeactivate: NO];
+            } else {
+                [nsWindow setCollectionBehavior:
+                    NSWindowCollectionBehaviorMoveToActiveSpace
+                    | NSWindowCollectionBehaviorFullScreenAuxiliary];
+            }
+        }
 
         if ( isNormalAppWindow(window) )
             becomeNormalApp();

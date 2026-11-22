@@ -8,6 +8,7 @@
 #include "platform/platformcommon.h"
 
 #include <AppKit/NSGraphics.h>
+#include <ApplicationServices/ApplicationServices.h>
 #include <Cocoa/Cocoa.h>
 #include <Carbon/Carbon.h>
 #include <CoreFoundation/CoreFoundation.h>
@@ -310,6 +311,16 @@ bool MacPlatformWindow::pasteFromClipboard()
 {
     if (!m_runningApplication) {
         log("Failed to paste to unknown window", LogWarning);
+        return false;
+    }
+
+    // CopieP: pasting simulates Cmd+V which needs the Accessibility
+    // permission. macOS drops it silently after the app is reinstalled,
+    // so ask again instead of failing without any feedback.
+    if ( !AXIsProcessTrusted() ) {
+        NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
+        AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+        log("Accessibility permission missing: cannot paste", LogWarning);
         return false;
     }
 

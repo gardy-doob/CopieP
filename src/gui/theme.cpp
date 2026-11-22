@@ -409,10 +409,7 @@ void Theme::resetTheme()
     m_theme["show_scrollbars"] = Option(true, "checked", ui ? ui->checkBoxScrollbars : nullptr);
 
     // CopieP: macOS-like defaults (no stripes, rounded rows, roomy spacing).
-    m_theme["css"] = Option(
-                "\n    #ClipboardBrowser{border: 0}"
-                "\n    #ClipboardBrowser::item{margin: 1px 6px}"
-                );
+    m_theme["css"] = Option("");
     m_theme["menu_css"] = Option(
                 "\n    ;border: 1px solid ${bg - #222}"
                 "\n    ;background: ${bg}"
@@ -430,21 +427,14 @@ void Theme::resetTheme()
                 "\n    ;color: ${bg - #666}"
                 );
 
-    m_theme["item_css"] = Option(
-                "\n    ;padding: 0.4em 0.6em"
-                "\n    ;border-radius: 7px"
-                );
+    m_theme["item_css"] = Option("");
     m_theme["alt_item_css"] = Option("");
-    m_theme["sel_item_css"] = Option(
-                "\n    ;border-radius: 7px"
-                );
-    m_theme["hover_item_css"] = Option(
-                "\n    ;border-radius: 7px"
-                );
+    m_theme["sel_item_css"] = Option("");
+    m_theme["hover_item_css"] = Option("");
     m_theme["cur_item_css"] = Option(
                 "\n    ;border: 0"
                 );
-    m_theme["item_spacing"] = Option("");
+    m_theme["item_spacing"] = Option("6");
     m_theme["notes_css"] = Option("");
 
     m_theme["tab_bar_css"] = Option(
@@ -546,7 +536,8 @@ void Theme::resetTheme()
 
 void Theme::updateTheme()
 {
-    m_margins = QSize(2, 2);
+    // CopieP: roomy cards (like Windows 11 clipboard).
+    m_margins = QSize(12, 9);
 
     // search style
     m_searchPalette.setColor(QPalette::Base, color("find_bg"));

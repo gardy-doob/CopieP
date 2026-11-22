@@ -9,6 +9,8 @@
 #include "common/temporaryfile.h"
 #include "common/textdata.h"
 #include "common/timer.h"
+#include "gui/iconfactory.h"
+#include "gui/icons.h"
 #include "gui/pixelratio.h"
 #include "gui/theme.h"
 #include "item/indexes.h"
@@ -29,6 +31,8 @@
 #include <QMessageBox>
 #include <QPainter>
 #include <QScrollBar>
+#include <QHBoxLayout>
+#include <QToolButton>
 #include <QTemporaryFile>
 #include <QUrl>
 
@@ -38,6 +42,58 @@
 #include <memory>
 
 namespace {
+
+const QLatin1String mimeItemPinned("application/x-copyq-item-pinned");
+const QLatin1String mimeItemProtected("application/x-copyq-item-protected");
+
+/// Updates hover buttons of visible browsers on any mouse move.
+class HoverWatcher final : public QObject
+{
+public:
+    explicit HoverWatcher(ClipboardBrowser *browser)
+        : QObject(browser)
+        , m_browser(browser)
+    {
+        qApp->installEventFilter(this);
+    }
+
+protected:
+    bool eventFilter(QObject *, QEvent *event) override
+    {
+        switch (event->type()) {
+        case QEvent::MouseMove:
+        case QEvent::Leave:
+        case QEvent::Wheel:
+        case QEvent::Hide:
+            if ( m_browser->isVisible() || event->type() == QEvent::Hide )
+                QTimer::singleShot(0, m_browser, &ClipboardBrowser::updateHoverActions);
+            break;
+        default:
+            break;
+        }
+        return false;
+    }
+
+private:
+    ClipboardBrowser *m_browser;
+};
+
+QToolButton *createHoverButton(QWidget *parent, unsigned short iconId, const QString &toolTip)
+{
+    auto button = new QToolButton(parent);
+    button->setIcon( getIcon(QString(), iconId) );
+    button->setToolTip(toolTip);
+    button->setAutoRaise(true);
+    button->setCheckable(true);
+    button->setFocusPolicy(Qt::NoFocus);
+    button->setCursor(Qt::PointingHandCursor);
+    button->setIconSize(QSize(14, 14));
+    button->setStyleSheet(QStringLiteral(
+        "QToolButton{border:0;border-radius:6px;padding:4px;background:transparent}"
+        "QToolButton:hover{background:rgba(127,127,127,0.25)}"
+        "QToolButton:checked{background:rgba(10,132,255,0.30)}"));
+    return button;
+}
 
 enum class MoveType {
     Absolute,
@@ -242,6 +298,142 @@ ClipboardBrowser::ClipboardBrowser(
 
     m_sharedData->theme.decorateBrowser(this);
     updateItemMaximumSize();
+
+    // CopieP: hover buttons to pin or pin + protect (Touch ID) an item.
+    m_hoverActions = new QWidget(viewport());
+    m_hoverActions->setObjectName(QStringLiteral("hover_actions"));
+    m_hoverActions->setAutoFillBackground(true);
+    auto hoverLayout = new QHBoxLayout(m_hoverActions);
+    hoverLayout->setContentsMargins(2, 2, 2, 2);
+    hoverLayout->setSpacing(2);
+    m_pinButton = createHoverButton(
+        m_hoverActions, IconThumbtack, QString::fromUtf8("Épingler (garder dans l’historique)"));
+    m_protectButton = createHoverButton(
+        m_hoverActions, IconFingerprint,
+        QString::fromUtf8("Épingler et protéger par empreinte (Touch ID)"));
+    hoverLayout->addWidget(m_pinButton);
+    hoverLayout->addWidget(m_protectButton);
+    m_hoverActions->hide();
+    connect( m_pinButton, &QToolButton::clicked, this, [this]() {
+        togglePinItem(m_hoverIndex);
+        updateHoverActions();
+    });
+    connect( m_protectButton, &QToolButton::clicked, this, [this]() {
+        toggleProtectItem(m_hoverIndex);
+        updateHoverActions();
+    });
+    new HoverWatcher(this);
+}
+
+void ClipboardBrowser::updateHoverActions()
+{
+    if (!m_hoverActions)
+        return;
+
+    const auto hide = [this]() {
+        m_hoverActions->hide();
+        m_hoverIndex = QPersistentModelIndex();
+    };
+
+    if ( !isVisible() || !isLoaded() || isInternalEditorOpen() || !m_dragStartPosition.isNull() ) {
+        hide();
+        return;
+    }
+
+    const QPoint pos = viewport()->mapFromGlobal(QCursor::pos());
+    if ( !viewport()->rect().contains(pos) ) {
+        hide();
+        return;
+    }
+
+    const QModelIndex index = indexAt(pos);
+    if ( !index.isValid() || isRowHidden(index.row()) ) {
+        hide();
+        return;
+    }
+
+    const QVariantMap data = index.data(contentType::data).toMap();
+    const bool pinned = data.contains(mimeItemPinned);
+    const bool isProtected = data.contains(mimeItemProtected);
+
+    m_hoverIndex = index;
+    m_pinButton->setChecked(pinned);
+    m_pinButton->setToolTip(pinned
+        ? QString::fromUtf8("Désépingler")
+        : QString::fromUtf8("Épingler (garder dans l’historique)"));
+    m_protectButton->setChecked(isProtected);
+    m_protectButton->setToolTip(isProtected
+        ? QString::fromUtf8("Retirer la protection (Touch ID demandé)")
+        : QString::fromUtf8("Épingler et protéger par empreinte (Touch ID)"));
+
+    m_hoverActions->adjustSize();
+    const QRect rect = visualRect(index);
+    const QSize size = m_hoverActions->sizeHint();
+    m_hoverActions->move(
+        rect.right() - size.width() - 10,
+        rect.top() + 4);
+    m_hoverActions->show();
+    m_hoverActions->raise();
+}
+
+void ClipboardBrowser::setItemFlags(const QPersistentModelIndex &index, bool pinned, bool isProtected)
+{
+    if ( !index.isValid() )
+        return;
+
+    QVariantMap data = index.data(contentType::data).toMap();
+    if (pinned)
+        data.insert(mimeItemPinned, QByteArray());
+    else
+        data.remove(mimeItemPinned);
+
+    if (isProtected)
+        data.insert(mimeItemProtected, QByteArray());
+    else
+        data.remove(mimeItemProtected);
+
+    m.setData(index, data, contentType::data);
+}
+
+void ClipboardBrowser::togglePinItem(const QPersistentModelIndex &index)
+{
+    if ( !index.isValid() )
+        return;
+
+    const QVariantMap data = index.data(contentType::data).toMap();
+    const bool pinned = data.contains(mimeItemPinned);
+    const bool isProtected = data.contains(mimeItemProtected);
+
+    if (pinned) {
+        // Unpinning a protected item also removes protection: authenticate first.
+        if ( isProtected && !unlockItems({index}) )
+            return;
+        setItemFlags(index, false, false);
+    } else {
+        // Like Windows 11: pinned items go to the top.
+        moveToTop(index);
+        setItemFlags(index, true, false);
+    }
+}
+
+void ClipboardBrowser::toggleProtectItem(const QPersistentModelIndex &index)
+{
+    if ( !index.isValid() )
+        return;
+
+    const QVariantMap data = index.data(contentType::data).toMap();
+    const bool pinned = data.contains(mimeItemPinned);
+    const bool isProtected = data.contains(mimeItemProtected);
+
+    if (isProtected) {
+        if ( !unlockItems({index}) )
+            return;
+        setItemFlags(index, true, false);
+    } else {
+        if (!pinned)
+            moveToTop(index);
+        setItemFlags(index, true, true);
+    }
 }
 
 ClipboardBrowser::~ClipboardBrowser()
@@ -995,6 +1187,35 @@ void ClipboardBrowser::dropEvent(QDropEvent *event)
 void ClipboardBrowser::paintEvent(QPaintEvent *e)
 {
     QListView::paintEvent(e);
+
+    // CopieP: friendly empty state (like Windows 11).
+    if ( isLoaded() && m.rowCount() == 0 ) {
+        QPainter p(viewport());
+        p.setRenderHint(QPainter::Antialiasing);
+        const QRect r = viewport()->rect();
+        QColor fg = palette().color(QPalette::Text);
+
+        const QIcon icon = getIcon(QString(), IconPaste);
+        const int iconSize = 56;
+        const QRect iconRect(r.center().x() - iconSize / 2, r.center().y() - iconSize - 24, iconSize, iconSize);
+        icon.paint(&p, iconRect);
+
+        QFont titleFont = font();
+        titleFont.setBold(true);
+        titleFont.setPointSizeF(titleFont.pointSizeF() * 1.35);
+        p.setFont(titleFont);
+        p.setPen(fg);
+        const QRect titleRect(r.left() + 16, iconRect.bottom() + 12, r.width() - 32, 32);
+        p.drawText(titleRect, Qt::AlignCenter, QString::fromUtf8("Votre presse-papiers est vide"));
+
+        QFont textFont = font();
+        p.setFont(textFont);
+        fg.setAlpha(170);
+        p.setPen(fg);
+        const QRect textRect(r.left() + 24, titleRect.bottom() + 6, r.width() - 48, 60);
+        p.drawText(textRect, Qt::AlignHCenter | Qt::AlignTop | Qt::TextWordWrap,
+                   QString::fromUtf8("Copiez du texte ou une image : l’historique apparaîtra ici."));
+    }
 
     // If dragging an item into list, draw indicator for dropping items.
     if (m_dragTargetRow != -1) {

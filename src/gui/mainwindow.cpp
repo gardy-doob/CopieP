@@ -67,6 +67,8 @@
 
 #include <QAction>
 #include <QCloseEvent>
+#include <QCursor>
+#include <QScreen>
 #include <QDesktopServices>
 #include <QFile>
 #include <QFileDialog>
@@ -2736,12 +2738,29 @@ bool MainWindow::syncInternalCommands(QVector<Command> *allCommands)
                     "copyq: visible() ? hide() : showAt(-1, -1, 340, 420)");
                 c.icon = fromIconId(IconPaste);
                 c.isGlobalShortcut = true;
-                c.globalShortcuts = QStringList{QStringLiteral("alt+v")};
+                // Option+V, plus Control+Option+V which also works in password
+                // fields (macOS blocks Option-only shortcuts there).
+                c.globalShortcuts = QStringList{
+                    QStringLiteral("alt+v"), QStringLiteral("meta+alt+v")};
                 c.enable = true;
                 allCommands->append(c);
                 changed = true;
             }
             settings.setValue(key, true);
+        }
+
+        // Upgrade the command created by older CopieP versions.
+        const QString versionKey = QStringLiteral("CopieP/paste_popup_version");
+        if ( !testMode && settings.value(versionKey).toInt() < 2 ) {
+            for (auto &cmd : *allCommands) {
+                if ( cmd.internalId != QLatin1String("copiep_global_paste_popup") )
+                    continue;
+                if ( !cmd.globalShortcuts.contains(QStringLiteral("meta+alt+v")) ) {
+                    cmd.globalShortcuts.append(QStringLiteral("meta+alt+v"));
+                    changed = true;
+                }
+            }
+            settings.setValue(versionKey, 2);
         }
     }
 
@@ -3459,6 +3478,31 @@ void MainWindow::trayActivated(int reason)
 #ifdef Q_OS_MAC
     if (!m_options.nativeTrayMenu && reason == QSystemTrayIcon::Context) {
         toggleMenu();
+        return;
+    }
+
+    // CopieP: click on the menu bar icon opens the clipboard panel right
+    // below the icon (right click opens the menu).
+    if ( reason == QSystemTrayIcon::Trigger && !m_options.trayMenuOpenOnLeftClick ) {
+        if ( isWindowVisible() ) {
+            hideWindow();
+            return;
+        }
+
+        const QPoint cursor = QCursor::pos();
+        QScreen *screen = QGuiApplication::screenAt(cursor);
+        if (!screen)
+            screen = QGuiApplication::primaryScreen();
+        const QRect available = screen->availableGeometry();
+
+        setGeometryGuardBlockedUntilHidden(this, true);
+        setWindowState(windowState() & ~Qt::WindowMaximized);
+        const int w = pointsToPixels(340, this);
+        const int h = pointsToPixels(440, this);
+        resize(w, h);
+        const int x = qBound(available.left() + 8, cursor.x() - w / 2, available.right() - w - 8);
+        move(x, available.top() + 6);
+        showWindow();
         return;
     }
 #endif
