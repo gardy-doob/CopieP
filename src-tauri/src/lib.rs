@@ -222,7 +222,74 @@ fn place_window(app: &AppHandle, window: &WebviewWindow, place: Place) {
     let _ = window.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
 }
 
+/// Sur Mac, la fenêtre est transformée en « panneau » (NSPanel) qui ne rend
+/// pas CopieP actif : c'est ce qui lui permet de s'afficher par-dessus une
+/// app en plein écran au lieu d'ouvrir sur un autre bureau.
+#[cfg(target_os = "macos")]
+mod mac_panel {
+    use tauri::{AppHandle, WebviewWindow};
+    use tauri_nspanel::{
+        tauri_panel, CollectionBehavior, ManagerExt, PanelLevel, StyleMask, WebviewWindowExt,
+    };
+
+    tauri_panel! {
+        panel!(CopiepPanel {
+            config: {
+                can_become_key_window: true,
+                is_floating_panel: true
+            }
+        })
+    }
+
+    /// À appeler une fois, sur le fil principal.
+    pub fn init(window: &WebviewWindow) -> tauri::Result<()> {
+        let panel = window.to_panel::<CopiepPanel>()?;
+        // Flottant : au-dessus des fenêtres normales, sous les fenêtres
+        // système (la demande Touch ID ne doit pas passer derrière).
+        panel.set_level(PanelLevel::Floating.value());
+        let _ = panel.add_style_mask(StyleMask::empty().nonactivating_panel().into());
+        panel.set_collection_behavior(
+            CollectionBehavior::new()
+                .full_screen_auxiliary()
+                .can_join_all_spaces()
+                .into(),
+        );
+        panel.set_hides_on_deactivate(false);
+        Ok(())
+    }
+
+    /// Affiche le panneau et lui donne le clavier, sans activer l'app.
+    /// Sur le fil principal uniquement.
+    pub fn show(app: &AppHandle) {
+        if let Ok(panel) = app.get_webview_panel("main") {
+            panel.show_and_make_key();
+        }
+    }
+}
+
+/// Affiche le panneau et lui donne le clavier (fil principal).
+fn present_window(app: &AppHandle, window: &WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window;
+        mac_panel::show(app);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+/// Ouvre le panneau (ou le ferme s'il est ouvert). Peut être appelé de
+/// n'importe quel fil : le travail est fait sur le fil principal.
 fn show_panel(app: &AppHandle, place: Place) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || show_panel_now(&handle, place));
+}
+
+fn show_panel_now(app: &AppHandle, place: Place) {
     let Some(window) = main_window(app) else { return };
     if window.is_visible().unwrap_or(false) {
         hide_panel(app, true);
@@ -233,14 +300,7 @@ fn show_panel(app: &AppHandle, place: Place) {
     st.unlocked.store(false, Ordering::SeqCst);
     *st.previous_app.lock().unwrap() = platform::frontmost_app_pid();
     place_window(app, &window, place);
-
-    #[cfg(target_os = "macos")]
-    if let Ok(ns) = window.ns_window() {
-        platform::setup_panel(ns);
-    }
-
-    let _ = window.show();
-    let _ = window.set_focus();
+    present_window(app, &window);
     let _ = app.emit("panel-shown", ());
 }
 
@@ -284,9 +344,15 @@ fn ensure_unlocked(app: &AppHandle) -> bool {
         notify_changed(app);
     }
     if visible {
-        if let Some(window) = main_window(app) {
-            let _ = window.set_focus();
-        }
+        // Redonner le clavier au panneau après la fenêtre Touch ID.
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Some(window) = main_window(&handle) {
+                if window.is_visible().unwrap_or(false) {
+                    present_window(&handle, &window);
+                }
+            }
+        });
     }
     ok
 }
@@ -442,7 +508,7 @@ fn open_accessibility_settings() {
 // Icône de la barre de menus
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Ouvrir CopieP (⌥V)", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Ouvrir CopieP (⌥V ou ⇧⌘V)", true, None::<&str>)?;
     let autostart_enabled = app.autolaunch().is_enabled().unwrap_or(false);
     let autostart = CheckMenuItem::with_id(app, "autostart", "Ouvrir au démarrage du Mac", true, autostart_enabled, None::<&str>)?;
     let clear = MenuItem::with_id(app, "clear", "Vider l’historique (garder les épinglés)", true, None::<&str>)?;
@@ -519,12 +585,17 @@ pub fn run() {
     let shortcuts = [
         // ⌥V, comme Windows + V.
         Shortcut::new(Some(Modifiers::ALT), Code::KeyV),
-        // ⌃⌥V : marche aussi dans les champs de mot de passe, où macOS
-        // bloque les raccourcis qui n'utilisent que ⌥.
+        // ⇧⌘V et ⌃⌥V : marchent aussi dans les champs de mot de passe, où
+        // macOS bloque les raccourcis qui n'utilisent que ⌥.
+        Shortcut::new(Some(Modifiers::SHIFT | Modifiers::SUPER), Code::KeyV),
         Shortcut::new(Some(Modifiers::ALT | Modifiers::CONTROL), Code::KeyV),
     ];
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_nspanel::init());
+
+    builder
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec![AUTOSTART_ARG]),
@@ -562,8 +633,8 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             if let Some(window) = main_window(&handle) {
-                if let Ok(ns) = window.ns_window() {
-                    platform::setup_panel(ns);
+                if let Err(e) = mac_panel::init(&window) {
+                    log::warn!("Panneau macOS indisponible : {e}");
                 }
             }
 

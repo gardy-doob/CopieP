@@ -1,8 +1,6 @@
 //! Versions simplifiées pour les autres systèmes (utilisées pour tester
 //! l'application hors Mac). L'application est pensée pour macOS.
 
-use std::ffi::c_void;
-
 pub fn clipboard_change_count() -> Option<i64> {
     None
 }
@@ -39,6 +37,3 @@ pub fn send_paste() -> bool {
 pub fn authenticate(_reason: &str) -> bool {
     std::env::var_os("COPIEP_REFUSE_AUTH").is_none()
 }
-
-#[allow(dead_code)]
-pub fn setup_panel(_ns_window: *mut c_void) {}

@@ -11,11 +11,10 @@ use objc2::rc::{autoreleasepool, Retained};
 use objc2::runtime::Bool;
 use objc2_app_kit::{
     NSApplicationActivationOptions, NSPasteboard, NSPasteboardTypeString, NSRunningApplication,
-    NSWindow, NSWindowCollectionBehavior, NSWorkspace,
+    NSWorkspace,
 };
 use objc2_foundation::{NSError, NSString};
 use objc2_local_authentication::{LAContext, LAPolicy};
-use std::ffi::c_void;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -152,23 +151,4 @@ pub fn authenticate(reason: &str) -> bool {
     let result = rx.recv_timeout(Duration::from_secs(180)).unwrap_or(false);
     drop(context);
     result
-}
-
-/// Fenêtre « panneau » : visible sur tous les bureaux, y compris par-dessus
-/// les apps en plein écran. À appeler sur le fil principal.
-pub fn setup_panel(ns_window: *mut c_void) {
-    if ns_window.is_null() {
-        return;
-    }
-    let window: &NSWindow = unsafe { &*(ns_window as *const NSWindow) };
-    window.setCollectionBehavior(
-        NSWindowCollectionBehavior::CanJoinAllSpaces
-            | NSWindowCollectionBehavior::FullScreenAuxiliary
-            | NSWindowCollectionBehavior::IgnoresCycle,
-    );
-    // Niveau « flottant » : au-dessus des fenêtres normales et des apps en
-    // plein écran, mais sous les fenêtres système (la demande Touch ID ne
-    // doit pas se retrouver cachée derrière le panneau).
-    window.setLevel(3);
-    window.setHidesOnDeactivate(false);
 }

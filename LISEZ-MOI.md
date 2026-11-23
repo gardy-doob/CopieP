@@ -8,7 +8,9 @@ L'ancienne version basée sur CopyQ (C++/Qt) est gardée dans la branche `copyq-
 ## Ce que fait CopieP
 
 - **⌥V** ouvre le panneau près du pointeur, par-dessus n'importe quelle app, même en plein écran.
-  **⌃⌥V** fait pareil et marche aussi dans les champs de mot de passe, où macOS bloque ⌥V.
+  **⇧⌘V** et **⌃⌥V** font pareil et marchent aussi dans les champs de mot de passe, où macOS
+  bloque ⌥V (il y tape « ◊ »). En contrepartie, ⇧⌘V ne sert plus à « coller sans mise en forme »
+  dans les apps qui l'utilisaient.
 - **Clic sur l'icône** de la barre de menus : le panneau s'ouvre juste en dessous.
   Le menu (démarrage automatique, vider l'historique, quitter) est au clic droit.
 - **Double-clic** ou **Entrée** : colle l'élément dans l'app où vous étiez.
